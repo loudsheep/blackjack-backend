@@ -23,10 +23,10 @@ pub async fn ws_handler(
 async fn handle_socket(socket: WebSocket, game_id: String, player_id: uuid::Uuid, state: Arc<AppState>) {
     let (mut sender, mut receiver) = socket.split();
 
-    let tx = state.get_game_sender(&game_id).await; 
+    let tx = state.get_game_sender(&game_id).await;
     let mut rx = state.subscribe_to_game(&game_id).await;
 
-    let mut send_task = tokio::spawn(async move {
+    let send_task = tokio::spawn(async move {
         while let Ok(msg) = rx.recv().await {
             let json = serde_json::to_string(&msg).unwrap();
             // Fix: Convert String to Utf8Bytes using .into()
