@@ -68,7 +68,7 @@ The backend exposes a WebSocket interaction model. The application state is auth
 ### Connection
 **URL:** `ws://<host>/ws/<game_id>`
 
-*   `game_id`: A unique string identifier for the room. You must create the game using the `/game/create` endpoint before connecting. If the room doesn't exist, the connection will be rejected with a `404 Not Found`.
+*   `game_id`: A unique string identifier for the room. You must create the game using the `/game/create` endpoint before connecting. If the room doesn't exist, the connection will be rejected with a `404 Not Found`, if room is full, it will be rejected with a `403 Forbidden`.
 
 ### Protocol
 All messages are JSON objects.
