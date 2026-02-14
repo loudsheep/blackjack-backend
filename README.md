@@ -96,7 +96,8 @@ All WebSocket messages are JSON.
   "hands": [ ... ],       // See Hand structure
   "active_hand_index": 0, // Index of the hand currently being acted on
   "status": "Playing",    // Spectating, Sitting, Playing, PendingApproval
-  "is_admin": true        // Can perform admin actions
+  "is_admin": true,       // Can perform admin actions
+  "is_connected": true    // True if connected, false if offline/disconnected
 }
 ```
 
@@ -141,11 +142,12 @@ Wrap all messages in: `{ "action": "Name", "payload": { ... } }`
 | **KickPlayer** | `{ "player_id": "..." }` | **(Admin)** Remove a player. |
 | **UpdateSettings**| `{ "settings": { ... } }` | **(Admin)** Change rules mid-game. |
 | **AdminUpdateBalance** | `{ "target_id": "...", "change_chips": 500 }` | **(Admin)** Modify player chips (use negative to deduct). |
+| **Ping** | `null` | Check latency/connection. Server replies with `Pong`. |
 
 **Note on Phases:**
 1.  **Lobby**: Players join. Admin starts game (`StartGame`).
 2.  **Betting**: Players place bets (Status -> `Playing`). Non-betters stay `Sitting`.
-    *   System Auto-Start: If **everyone** eligible has bet.
+    *   System Auto-Start: If **everyone** eligible and **connected** has bet. Offline players are ignored.
     *   Admin Force-Start: If some have bet, Admin can `StartGame` to proceed. Non-betters skip the round.
 3.  **Playing**: Players take actions.
     *   Admin can `StartGame` to force-stand the current player (timeout).
@@ -216,4 +218,13 @@ Sent to **Admins only** when `approval_required` is true and someone joins.
   "event": "ChatBroadcast",
   "data": { "from": "Alice", "msg": "gg" }
 }
+
+#### 6. Pong
+Response to **Ping**.
+```json
+{
+  "event": "Pong",
+  "data": null
+}
+```
 ```

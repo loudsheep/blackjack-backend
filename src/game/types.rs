@@ -22,7 +22,6 @@ pub struct Player {
     pub is_admin: bool,
     #[serde(skip)]
     pub secret: String,
-    #[serde(skip)]
     pub is_connected: bool,
 }
 

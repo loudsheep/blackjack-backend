@@ -137,6 +137,12 @@ impl GameActor {
             ClientMessage::NextRound => {
                 self.handle_next_round(player_id);
             }
+
+            ClientMessage::Ping => {
+                if let Some(conn_id) = self.connection_map.iter().find(|(_, val)| **val == player_id).map(|(c, _)| *c) {
+                    self.send_to(conn_id, ServerMessage::Pong);
+                }
+            }
             
             _ => {} // Handled in run()
         }
@@ -278,8 +284,11 @@ impl GameActor {
 
     fn handle_disconnect(&mut self, conn_id: Uuid) {
         if let Some(player_id) = self.connection_map.remove(&conn_id) {
+            let still_connected = self.connection_map.values().any(|&pid| pid == player_id);
             if let Some(player) = self.players.iter_mut().find(|p| p.id == player_id) {
-                player.is_connected = false;
+                if !still_connected {
+                    player.is_connected = false;
+                }
             }
             self.update_player_count();
             // Don't remove player immediately.
@@ -495,6 +504,7 @@ impl GameActor {
         // So automatic start only happens if EVERYONE currently connected (and approved) has placed a bet.
         
         let all_ready = self.players.iter().all(|p| {
+            !p.is_connected ||
             p.status == PlayerStatus::Playing
             || p.status == PlayerStatus::PendingApproval // Pending don't count
             // If someone is Sitting/Spectating, they haven't bet yet.
@@ -664,9 +674,9 @@ impl GameActor {
                 return;
             }
 
-            // Skip players who are not Playing (e.g. Sitting or Pending)
+            // Skip players who are not Playing (e.g. Sitting or Pending) or Disconnected
             if let Some(player) = self.players.get(self.turn_index) {
-                if player.status == PlayerStatus::Playing {
+                if player.status == PlayerStatus::Playing && player.is_connected {
                     break;
                 }
             }
@@ -791,11 +801,11 @@ impl GameActor {
             }
         }
 
-        // Set turn_index to the first active player
-        if let Some(pos) = self.players.iter().position(|p| p.status == PlayerStatus::Playing) {
+        // Set turn_index to the first active player who is connected
+        if let Some(pos) = self.players.iter().position(|p| p.status == PlayerStatus::Playing && p.is_connected) {
             self.turn_index = pos;
         } else {
-             // Should not happen due to guard above
+             // No connected players, dealer takes over
              self.play_dealer_turn();
              return;
         }

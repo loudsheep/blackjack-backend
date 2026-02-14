@@ -21,6 +21,7 @@ pub enum ClientMessage {
     PlaceBet { amount: u32 },
     GameAction { action_type: ActionType }, // Hit, Stand, Double, Split
     Chat { message: String },
+    Ping,
 
     // Internal/System
     #[serde(skip_deserializing)]
@@ -67,6 +68,7 @@ pub enum ServerMessage {
         from: String,
         msg: String,
     },
+    Pong,
     PlayerRequest {
         id: Uuid,
         name: String,
