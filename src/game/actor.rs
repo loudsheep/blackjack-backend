@@ -166,6 +166,9 @@ impl GameActor {
 
     fn handle_approve(&mut self, admin_id: Uuid, target_id: Uuid) {
         if !self.is_admin(admin_id) {
+            let _ = self.sender.send(ServerMessage::Error {
+                msg: "Only admins can approve players.".to_string(),
+            });
             return;
         }
 
@@ -179,6 +182,9 @@ impl GameActor {
 
     fn handle_kick(&mut self, admin_id: Uuid, target_id: Uuid) {
         if !self.is_admin(admin_id) {
+            let _ = self.sender.send(ServerMessage::Error {
+                msg: "Only admins can kick players.".to_string(),
+            });
             return;
         }
 
@@ -191,6 +197,9 @@ impl GameActor {
 
     fn handle_update_settings(&mut self, admin_id: Uuid, settings: GameSettings) {
         if !self.is_admin(admin_id) {
+            let _ = self.sender.send(ServerMessage::Error {
+                msg: "Only admins can update settings.".to_string(),
+            });
             return;
         }
         self.settings = settings;
@@ -199,6 +208,9 @@ impl GameActor {
 
     fn handle_admin_update_balance(&mut self, admin_id: Uuid, target_id: Uuid, change_chips: i32) {
         if !self.is_admin(admin_id) {
+            let _ = self.sender.send(ServerMessage::Error {
+                msg: "Only admins can update player balances.".to_string(),
+            });
             return;
         }
 
@@ -219,6 +231,9 @@ impl GameActor {
 
     fn handle_chat(&mut self, player_id: Uuid, msg: String) {
         if !self.settings.chat_enabled {
+            let _ = self.sender.send(ServerMessage::Error {
+                msg: "Chat is currently disabled.".to_string(),
+            });
             return;
         }
 
@@ -237,24 +252,41 @@ impl GameActor {
 
     fn handle_start_game(&mut self, player_id: Uuid) {
         if !self.is_admin(player_id) {
+            let _ = self.sender.send(ServerMessage::Error {
+                msg: "Only admins can start the game.".to_string(),
+            });
             return;
         }
         if self.phase == GamePhase::Lobby {
             self.start_betting_phase();
+        } else {
+            let _ = self.sender.send(ServerMessage::Error {
+                msg: "Game can only be started from the Lobby phase.".to_string(),
+            });
         }
     }
 
     fn handle_next_round(&mut self, player_id: Uuid) {
         if !self.is_admin(player_id) {
+            let _ = self.sender.send(ServerMessage::Error {
+                msg: "Only admins can start the next round.".to_string(),
+            });
             return;
         }
         if self.phase == GamePhase::Payout {
             self.start_betting_phase();
+        } else {
+            let _ = self.sender.send(ServerMessage::Error {
+                msg: "Next round can only be started from the Payout phase.".to_string(),
+            });
         }
     }
 
     fn handle_bet(&mut self, player_id: Uuid, amount: u32) {
         if self.phase != GamePhase::Betting {
+             let _ = self.sender.send(ServerMessage::Error {
+                msg: "Bets can only be placed during the Betting phase.".to_string(),
+            });
             return;
         }
 
@@ -263,6 +295,9 @@ impl GameActor {
         if let Some(player) = self.players.iter_mut().find(|p| p.id == player_id) {
             // Pending players cannot bet
             if player.status == PlayerStatus::PendingApproval {
+                 let _ = self.sender.send(ServerMessage::Error {
+                    msg: "You must be approved before playing.".to_string(),
+                });
                 return;
             }
 
@@ -277,6 +312,11 @@ impl GameActor {
                 }];
                 player.active_hand_index = 0;
                 status_changed = true;
+            } else {
+                 let _ = self.sender.send(ServerMessage::Error {
+                    msg: "Not enough chips to place bet.".to_string(),
+                });
+                return;
             }
         }
 
@@ -299,6 +339,9 @@ impl GameActor {
 
     fn handle_action(&mut self, player_id: Uuid, action: ActionType) {
         if self.phase != GamePhase::Playing {
+            let _ = self.sender.send(ServerMessage::Error {
+                msg: "Actions can only be performed during the Playing phase.".to_string(),
+            });
             return;
         }
 
@@ -308,6 +351,9 @@ impl GameActor {
             .unwrap_or(false);
 
         if !is_turn {
+             let _ = self.sender.send(ServerMessage::Error {
+                msg: "It is not your turn.".to_string(),
+            });
             return;
         }
 
@@ -321,6 +367,10 @@ impl GameActor {
                     ActionType::Double => {
                         if player.chips >= hand.bet {
                             action_result = ActionResult::Double(hand.bet);
+                        } else {
+                             let _ = self.sender.send(ServerMessage::Error {
+                                msg: "Not enough chips to double down.".to_string(),
+                            });
                         }
                     }
                     ActionType::Split => {
@@ -329,6 +379,10 @@ impl GameActor {
                             && hand.cards[0].rank == hand.cards[1].rank
                         {
                             action_result = ActionResult::Split(hand.bet);
+                        } else {
+                             let _ = self.sender.send(ServerMessage::Error {
+                                msg: "Cannot split: need pair and enough chips.".to_string(),
+                            });
                         }
                     }
                 }

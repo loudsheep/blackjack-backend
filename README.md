@@ -78,12 +78,16 @@ Send these messages with the structure `{"action": "ActionName", "payload": { ..
 
 | Action | Payload | Description |
 | :--- | :--- | :--- |
-| `CreateGame` | `{ "username": "Alice", "settings": { ... } }` | Initialize the room settings (admin only). |
-| `JoinGame` | `{ "username": "Bob", "game_id": "room1" }` | Join an existing lobby. |
+| `JoinGame` | `{ "username": "Bob" }` | Join the lobby of the connected game. |
 | `StartGame` | `null` | (Admin) Start the game, moving from Lobby to Betting phase. |
+| `NextRound` | `null` | (Admin) Start the next round, moving from Payout to Betting phase. |
 | `PlaceBet` | `{ "amount": 100 }` | Place chips during the `Betting` phase. |
 | `GameAction` | `{ "action_type": "Hit" }` | Perform a move. Types: `Hit`, `Stand`, `Double`, `Split`. |
 | `Chat` | `{ "message": "Hello" }` | Send a chat message. |
+| `ApprovePlayer` | `{ "player_id": "uuid" }` | (Admin) Approve a player in `PendingApproval` state. |
+| `KickPlayer` | `{ "player_id": "uuid" }` | (Admin) Kick a player from the game. |
+| `UpdateSettings` | `{ "settings": { ... } }` | (Admin) Update game settings mid-game. |
+| `AdminUpdateBalance` | `{ "target_id": "uuid", "change_chips": 100 }` | (Admin) Add or remove chips from a player. Negative values remove chips. |
 
 **Settings Object:**
 ```json
@@ -106,17 +110,20 @@ Sent whenever the game state changes. This is the source of truth for rendering.
   "event": "GameStateSnapshot",
   "data": {
     "phase": "Betting", // Lobby, Betting, Playing, DealerTurn, Payout, GameOver
-    "dealer_hand": [ {"suit": "Spades", "rank": "Ace"} ], // Hidden if necessary
+    "dealer_hand": [ {"suit": "Spades", "rank": "Ace"} ], // Hidden/Truncated if playing
     "players": [
       {
         "id": "uuid-string",
         "name": "Alice",
         "chips": 1000,
         "status": "Playing",
-        "hands": [ ... ]
+        "hands": [ ... ],
+        "is_admin": true
       }
     ],
-    "current_turn_player_id": "uuid-string" // Null if not playing phase
+    "deck_remaining": 48,
+    "current_turn_player_id": "uuid-string", // Null if not playing phase
+    "settings": { ... } // Current game settings
   }
 }
 ```
@@ -145,10 +152,23 @@ Confirmation sent to a user upon successful join.
 }
 ```
 
-**4. `Error`**
+**4. `PlayerRequest`**
+Sent to admins when a player joins a room with `approval_required` enabled.
+```json
+{
+  "event": "PlayerRequest",
+  "data": {
+    "id": "uuid-string",
+    "name": "Charlie"
+  }
+}
+```
+
+**5. `Error`**
+Sent when an invalid action is attempted or a system error occurs.
 ```json
 {
   "event": "Error",
-  "data": { "msg": "Not enough chips" }
+  "data": { "msg": "Not enough chips to double down." }
 }
 ```
