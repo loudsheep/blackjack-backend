@@ -55,15 +55,33 @@ impl GameActor {
                     self.handle_action(player_id, action_type);
                 }
 
-                ClientMessage::ApprovePlayer { player_id } => {
-                    if self.is_admin(player_id) {
-                        if let Some(p) = self.players.iter_mut().find(|p| p.id == player_id) {
-                            p.status = PlayerStatus::Spectating;
-                        }
-                        self.broadcast_state();
-                    }
+                ClientMessage::ApprovePlayer { player_id: target_id } => {
+                    self.handle_approve(player_id, target_id);
                 }
-                _ => {}
+
+                ClientMessage::KickPlayer { player_id: target_id } => {
+                    self.handle_kick(player_id, target_id);
+                }
+
+                ClientMessage::UpdateSettings { settings } => {
+                    self.handle_update_settings(player_id, settings);
+                }
+
+                ClientMessage::AdminUpdateBalance { target_id, change_chips } => {
+                    self.handle_admin_update_balance(player_id, target_id, change_chips);
+                }
+
+                ClientMessage::Chat { message } => {
+                    self.handle_chat(player_id, message);
+                }
+
+                ClientMessage::StartGame => {
+                    self.handle_start_game(player_id);
+                }
+
+                ClientMessage::NextRound => {
+                    self.handle_next_round(player_id);
+                }
             }
         }
     }
@@ -86,6 +104,23 @@ impl GameActor {
     }
 
     fn handle_join(&mut self, player_id: Uuid, username: String) {
+        if self.players.iter().any(|p| p.id == player_id) {
+            return;
+        }
+
+        if self.players.len() >= self.settings.max_players {
+            let _ = self.sender.send(ServerMessage::Error {
+                msg: "Game is full".to_string(),
+            });
+            // Ideally we would send this only to the connecting player, but broadcast sends to all.
+            // A better architecture would allow unicast. For now, we broadcast error, clients should handle it.
+            // However, this might spam others. 
+            // Since we can't unicast easily with this broadcast channel, we might just return and let the client timeout or stay in limbo?
+            // Or we check max players at connection time in ws.rs?
+            // ws.rs doesn't check max players before upgrading.
+            return;
+        }
+
         let is_first = self.players.is_empty();
         let status = if self.settings.approval_required && !is_first {
             PlayerStatus::PendingApproval
@@ -93,25 +128,119 @@ impl GameActor {
             PlayerStatus::Spectating
         };
 
+        if status == PlayerStatus::PendingApproval {
+            let msg = ServerMessage::PlayerRequest {
+                id: player_id,
+                name: username.clone(),
+            };
+            let _ = self.sender.send(msg); // Admins should listen for this
+        }
+
         self.players.push(Player {
             id: player_id,
             name: username,
             chips: self.settings.initial_chips,
             hands: vec![],
             active_hand_index: 0,
-            status,
+            status: status.clone(),
+            is_admin: is_first,
+        });
+
+        // Broadcast JoinedLobby - clients should check if `your_id` matches theirs
+        let _ = self.sender.send(ServerMessage::JoinedLobby {
+            game_id: self.game_id.clone(),
+            your_id: player_id,
             is_admin: is_first,
         });
 
         self.broadcast_state();
     }
 
+    fn handle_approve(&mut self, admin_id: Uuid, target_id: Uuid) {
+        if !self.is_admin(admin_id) { return; }
+        
+        if let Some(player) = self.players.iter_mut().find(|p| p.id == target_id) {
+            if player.status == PlayerStatus::PendingApproval {
+                player.status = PlayerStatus::Spectating;
+                self.broadcast_state();
+            }
+        }
+    }
+
+    fn handle_kick(&mut self, admin_id: Uuid, target_id: Uuid) {
+        if !self.is_admin(admin_id) { return; }
+
+        // Remove player
+        if let Some(pos) = self.players.iter().position(|p| p.id == target_id) {
+            self.players.remove(pos);
+            self.broadcast_state();
+        }
+    }
+
+    fn handle_update_settings(&mut self, admin_id: Uuid, settings: GameSettings) {
+        if !self.is_admin(admin_id) { return; }
+        self.settings = settings;
+    }
+
+    fn handle_admin_update_balance(&mut self, admin_id: Uuid, target_id: Uuid, change_chips: i32) {
+        if !self.is_admin(admin_id) { return; }
+
+        if let Some(player) = self.players.iter_mut().find(|p| p.id == target_id) {
+            if change_chips < 0 {
+                let deduction = (-change_chips) as u32;
+                if player.chips >= deduction {
+                    player.chips -= deduction;
+                } else {
+                    player.chips = 0;
+                }
+            } else {
+                player.chips += change_chips as u32;
+            }
+            self.broadcast_state();
+        }
+    }
+
+    fn handle_chat(&mut self, player_id: Uuid, msg: String) {
+        if !self.settings.chat_enabled { return; }
+
+        let sender_name = self.players.iter().find(|p| p.id == player_id)
+            .map(|p| p.name.clone())
+            .unwrap_or_else(|| "Unknown".to_string());
+
+        let _ = self.sender.send(ServerMessage::ChatBroadcast {
+            from: sender_name,
+            msg,
+        });
+    }
+
+    fn handle_start_game(&mut self, player_id: Uuid) {
+        if !self.is_admin(player_id) { return; }
+        if self.phase == GamePhase::Lobby {
+            self.start_betting_phase();
+        }
+    }
+
+    fn handle_next_round(&mut self, player_id: Uuid) {
+        if !self.is_admin(player_id) { return; }
+        if self.phase == GamePhase::Payout {
+            self.start_betting_phase();
+        }
+    }
+
+
     fn handle_bet(&mut self, player_id: Uuid, amount: u32) {
         if self.phase != GamePhase::Betting {
             return;
         }
 
+        let mut status_changed = false;
+
         if let Some(player) = self.players.iter_mut().find(|p| p.id == player_id) {
+            // Pending players cannot bet
+            if player.status == PlayerStatus::PendingApproval {
+                return;
+            }
+
             if player.chips >= amount {
                 player.chips -= amount;
                 player.status = PlayerStatus::Playing;
@@ -122,8 +251,11 @@ impl GameActor {
                     status: HandStatus::Playing,
                 }];
                 player.active_hand_index = 0;
+                status_changed = true;
             }
         }
+
+        if !status_changed { return; }
 
         let all_bets_placed = self.players.iter().all(|p| {
             p.status == PlayerStatus::Spectating
@@ -332,7 +464,7 @@ impl GameActor {
     fn start_betting_phase(&mut self) {
         self.phase = GamePhase::Betting;
         for player in self.players.iter_mut() {
-            if player.status != PlayerStatus::Spectating {
+            if player.status != PlayerStatus::Spectating && player.status != PlayerStatus::PendingApproval {
                 player.status = PlayerStatus::Playing;
             }
         }

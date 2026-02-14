@@ -13,7 +13,7 @@ pub enum ClientMessage {
     ApprovePlayer { player_id: Uuid },
     KickPlayer { player_id: Uuid },
     UpdateSettings { settings: GameSettings }, // Mid-game change
-    AdminAction { target_id: Uuid, change_chips: i32 }, // Admin cheat/fix
+    AdminUpdateBalance { target_id: Uuid, change_chips: i32 }, // Admin cheat/fix
     NextRound, // Transitions Payout -> Betting
 
     // Player Actions
