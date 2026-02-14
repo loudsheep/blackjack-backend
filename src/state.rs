@@ -11,6 +11,8 @@ use uuid::Uuid;
 pub struct GameHandle {
     pub sender: mpsc::Sender<(Uuid, ClientMessage)>,
     pub state_sender: broadcast::Sender<ServerMessage>,
+    pub settings: GameSettings,
+    pub player_count: std::sync::Arc<std::sync::atomic::AtomicUsize>,
 }
 
 pub struct AppState {
@@ -42,7 +44,8 @@ impl AppState {
         let (tx, rx) = mpsc::channel(100);
         let (tx_state, _) = broadcast::channel(100);
 
-        let mut actor = GameActor::new(id.clone(), settings, rx, tx_state.clone());
+        let player_count = std::sync::Arc::new(std::sync::atomic::AtomicUsize::new(0));
+        let mut actor = GameActor::new(id.clone(), settings.clone(), rx, tx_state.clone(), player_count.clone());
 
         let game_id_owned = id.clone();
         tokio::spawn(async move {
@@ -53,6 +56,8 @@ impl AppState {
         let handle = GameHandle {
             sender: tx,
             state_sender: tx_state,
+            settings: settings,
+            player_count: player_count,
         };
 
         games.insert(id.clone(), handle);

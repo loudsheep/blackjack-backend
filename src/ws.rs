@@ -14,8 +14,14 @@ pub async fn ws_handler(
     Path(game_id): Path<String>,
     State(state): State<Arc<AppState>>,
 ) -> impl IntoResponse {
-    if state.get_game_handle(&game_id).await.is_none() {
-        return StatusCode::NOT_FOUND.into_response();
+    let handle = match state.get_game_handle(&game_id).await {
+        Some(h) => h,
+        None => return StatusCode::NOT_FOUND.into_response(),
+    };
+
+    let current_players = handle.player_count.load(std::sync::atomic::Ordering::Relaxed);
+    if current_players >= handle.settings.max_players {
+        return StatusCode::FORBIDDEN.into_response(); // 403 if full
     }
 
     let player_id = uuid::Uuid::new_v4();

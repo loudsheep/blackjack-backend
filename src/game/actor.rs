@@ -16,6 +16,7 @@ pub struct GameActor {
     // Channels
     receiver: mpsc::Receiver<(Uuid, ClientMessage)>, // We need to know WHO sent the msg
     sender: broadcast::Sender<ServerMessage>,
+    player_count_ref: std::sync::Arc<std::sync::atomic::AtomicUsize>,
 }
 
 impl GameActor {
@@ -24,6 +25,7 @@ impl GameActor {
         settings: GameSettings,
         receiver: mpsc::Receiver<(Uuid, ClientMessage)>,
         sender: broadcast::Sender<ServerMessage>,
+        player_count_ref: std::sync::Arc<std::sync::atomic::AtomicUsize>,
     ) -> Self {
         let mut actor = Self {
             game_id,
@@ -35,6 +37,7 @@ impl GameActor {
             turn_index: 0,
             receiver,
             sender,
+            player_count_ref,
         };
         actor.init_deck();
         actor
@@ -112,12 +115,6 @@ impl GameActor {
             let _ = self.sender.send(ServerMessage::Error {
                 msg: "Game is full".to_string(),
             });
-            // Ideally we would send this only to the connecting player, but broadcast sends to all.
-            // A better architecture would allow unicast. For now, we broadcast error, clients should handle it.
-            // However, this might spam others. 
-            // Since we can't unicast easily with this broadcast channel, we might just return and let the client timeout or stay in limbo?
-            // Or we check max players at connection time in ws.rs?
-            // ws.rs doesn't check max players before upgrading.
             return;
         }
 
@@ -145,6 +142,9 @@ impl GameActor {
             status: status.clone(),
             is_admin: is_first,
         });
+        
+        // Update shared player count
+        self.player_count_ref.store(self.players.len(), std::sync::atomic::Ordering::Relaxed);
 
         // Broadcast JoinedLobby - clients should check if `your_id` matches theirs
         let _ = self.sender.send(ServerMessage::JoinedLobby {
@@ -180,6 +180,7 @@ impl GameActor {
     fn handle_update_settings(&mut self, admin_id: Uuid, settings: GameSettings) {
         if !self.is_admin(admin_id) { return; }
         self.settings = settings;
+        self.broadcast_state();
     }
 
     fn handle_admin_update_balance(&mut self, admin_id: Uuid, target_id: Uuid, change_chips: i32) {
@@ -517,6 +518,7 @@ impl GameActor {
             players: self.players.clone(),
             deck_remaining: self.deck.len(),
             current_turn_player_id: self.players.get(self.turn_index).map(|p| p.id),
+            settings: self.settings.clone(),
         };
 
         let _ = self.sender.send(msg);

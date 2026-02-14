@@ -37,6 +37,7 @@ pub enum ServerMessage {
         players: Vec<Player>,
         deck_remaining: usize,
         current_turn_player_id: Option<Uuid>,
+        settings: GameSettings,
     },
 
     ChatBroadcast { from: String, msg: String },
