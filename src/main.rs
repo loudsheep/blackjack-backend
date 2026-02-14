@@ -8,6 +8,7 @@ use axum::{
     routing::{get, post},
 };
 use game::handlers::create_game_handler;
+use tower_http::cors::CorsLayer;
 use tracing_subscriber::{layer::SubscriberExt, util::SubscriberInitExt};
 
 #[tokio::main]
@@ -40,7 +41,8 @@ async fn main() {
         .route("/", get(|| async { "Hello, World!" }))
         .route("/game/create", post(create_game_handler))
         .route("/ws/{game_id}", get(ws::ws_handler))
-        .with_state(shared_state);
+        .with_state(shared_state)
+        .layer(CorsLayer::permissive());
 
     // get address and port from environment variables or use defaults
     let addr = std::env::var("APP_ADDRESS").unwrap_or_else(|_| "127.0.0.1:3000".into());

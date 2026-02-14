@@ -1,95 +1,115 @@
 # Blackjack Backend
 
-A robust, real-time multiplayer Blackjack game server written in Rust. This backend powers the game logic, state management, and communication for a Blackjack platform, designed to be consumed by a web or mobile frontend.
+A robust, real-time multiplayer Blackjack game server written in Rust. This backend powers the game logic, state management, and communication for a Blackjack platform.
 
 ## Tech Stack
-
 *   **Language:** Rust (2021 Edition)
-*   **Web Framework:** [Axum](https://github.com/tokio-rs/axum)
-*   **Async Runtime:** Tokio
-*   **WebSockets:** Native Axum WebSocket integration
-*   **Serialization:** Serde & Serde JSON
-*   **State Management:** Actor-like pattern using Tokio channels (`mpsc` & `broadcast`)
+*   **Framework:** Axum (Web & WebSockets)
+*   **Runtime:** Tokio
+*   **Serialization:** Serde JSON
 
-## Setup Guide
+## Setup & Running
 
-### Prerequisites
-*   [Rust & Cargo](https://rustup.rs/) installed.
-
-### Installation & Running
-
-1.  **Clone the repository:**
-    ```bash
-    git clone https://github.com/yourusername/blackjack-backend.git
-    cd blackjack-backend
-    ```
-
-2.  **Configuration (Optional):**
-    You can create a `.env` file in the root directory to override defaults:
-    ```env
-    # default: 127.0.0.1:3000
-    APP_ADDRESS=0.0.0.0:8080 
-    # default: blackjack_backend=debug
-    RUST_LOG=blackjack_backend=info 
-    ```
-
-3.  **Run the server:**
+1.  **Clone & Run:**
     ```bash
     cargo run
     ```
+    Server starts at `http://127.0.0.1:3000`.
 
-The server will start (default: `http://127.0.0.1:3000`).
+2.  **Configuration (.env):**
+    ```env
+    APP_ADDRESS=0.0.0.0:3000
+    RUST_LOG=blackjack_backend=debug
+    ```
 
-## Frontend Documentation
+## Frontend Integration Guide
 
-The backend exposes a WebSocket interaction model. The application state is authoritative on the server.
+This backend uses a persistent WebSocket connection. State is authoritative on the server.
 
-### Creating a Game
-**URL:** `POST http://<host>/game/create`
+### 1. Game Creation (REST)
+**POST** `/game/create`  
+Create a new room before connecting.
 
-**Request Body:**
+**Request:**
 ```json
 {
-  "initial_chips": 1000,
-  "max_players": 5,
-  "deck_count": 1,
-  "approval_required": false,
-  "chat_enabled": true
+  "settings": {
+    "initial_chips": 1000,
+    "max_players": 5,
+    "deck_count": 6,
+    "approval_required": false,
+    "chat_enabled": true
+  }
 }
 ```
 
 **Response:**
 ```json
+{ "game_id": "849201" }
+```
+
+### 2. Connection & Reconnection (WebSocket)
+**Endpoint:** `ws://<host>/ws/<game_id>`
+
+The server supports session persistence. You **must** store the credentials received in `JoinedLobby` to allow players to refresh the page without losing their spot.
+
+*   **New Session:**
+    Connect to `ws://localhost:3000/ws/849201`.
+*   **Reconnection:**
+    Append credentials to the URL:
+    `ws://localhost:3000/ws/849201?player_id=<UUID>&secret=<SECRET>`
+
+**Status Codes:**
+*   `101`: Connected.
+*   `404`: Game not found (ended or wrong ID).
+*   `403`: Game is full (and you are not reconnecting).
+
+### 3. Client Implementation Flow
+1.  **Connect** via WebSocket.
+2.  If this is a fresh session, send `JoinGame`.
+3.  Listen for `JoinedLobby`. **Save `your_id` and `secret` to LocalStorage immediately.**
+4.  Listen for `GameStateSnapshot` to render the UI.
+5.  On page reload, read LocalStorage. If keys exist, connect using the Reconnection URL.
+6.  If reconnection fails (socket closes or Error received), clear LocalStorage and connect normally.
+
+---
+
+## Protocol Reference
+
+All WebSocket messages are JSON.
+
+### Data Structures
+
+**Card**
+```json
+{ "suit": "Hearts", "rank": "Ace" }
+```
+*   **Suits:** `Hearts`, `Diamonds`, `Clubs`, `Spades`
+*   **Ranks:** `Two`..`Ten`, `Jack`, `Queen`, `King`, `Ace`
+
+**Player**
+```json
 {
-  "game_id": "123456"
+  "id": "uuid-string",
+  "name": "Alice",
+  "chips": 1000,
+  "hands": [ ... ],       // See Hand structure
+  "active_hand_index": 0, // Index of the hand currently being acted on
+  "status": "Playing",    // Spectating, Sitting, Playing, PendingApproval
+  "is_admin": true        // Can perform admin actions
 }
 ```
 
-### Connection
-**URL:** `ws://<host>/ws/<game_id>`
+**Hand**
+```json
+{
+  "cards": [ { "suit": "Spades", "rank": "Ten" }, ... ],
+  "bet": 100,
+  "status": "Playing" // Playing, Stood, Busted, Blackjack, Doubled
+}
+```
 
-*   `game_id`: A unique string identifier for the room. You must create the game using the `/game/create` endpoint before connecting. If the room doesn't exist, the connection will be rejected with a `404 Not Found`, if room is full, it will be rejected with a `403 Forbidden`.
-
-### Protocol
-All messages are JSON objects.
-
-#### Client Messages (Frontend -> Backend)
-Send these messages with the structure `{"action": "ActionName", "payload": { ... }}`.
-
-| Action | Payload | Description |
-| :--- | :--- | :--- |
-| `JoinGame` | `{ "username": "Bob" }` | Join the lobby of the connected game. |
-| `StartGame` | `null` | (Admin) Start the game, moving from Lobby to Betting phase. |
-| `NextRound` | `null` | (Admin) Start the next round, moving from Payout to Betting phase. |
-| `PlaceBet` | `{ "amount": 100 }` | Place chips during the `Betting` phase. |
-| `GameAction` | `{ "action_type": "Hit" }` | Perform a move. Types: `Hit`, `Stand`, `Double`, `Split`. |
-| `Chat` | `{ "message": "Hello" }` | Send a chat message. |
-| `ApprovePlayer` | `{ "player_id": "uuid" }` | (Admin) Approve a player in `PendingApproval` state. |
-| `KickPlayer` | `{ "player_id": "uuid" }` | (Admin) Kick a player from the game. |
-| `UpdateSettings` | `{ "settings": { ... } }` | (Admin) Update game settings mid-game. |
-| `AdminUpdateBalance` | `{ "target_id": "uuid", "change_chips": 100 }` | (Admin) Add or remove chips from a player. Negative values remove chips. |
-
-**Settings Object:**
+**GameSettings**
 ```json
 {
   "initial_chips": 1000,
@@ -100,75 +120,86 @@ Send these messages with the structure `{"action": "ActionName", "payload": { ..
 }
 ```
 
-#### Server Messages (Backend -> Frontend)
-The server broadcasts these events with the structure `{"event": "EventName", "data": { ... }}`.
+**GamePhase**
+Values: `Lobby`, `Betting`, `Playing`, `DealerTurn`, `Payout`, `GameOver`
 
-**1. `GameStateSnapshot`**
-Sent whenever the game state changes. This is the source of truth for rendering.
+---
+
+### Client Messages (Send)
+
+Wrap all messages in: `{ "action": "Name", "payload": { ... } }`
+
+| Action | Payload JSON | Description |
+| :--- | :--- | :--- |
+| **JoinGame** | `{ "username": "Bob" }` | Register as a player. Required if not reconnecting. |
+| **PlaceBet** | `{ "amount": 50 }` | Bet chips. Valid only in `Betting` phase. |
+| **GameAction** | `{ "action_type": "Hit" }` | Types: `Hit`, `Stand`, `Double`, `Split`. Valid in `Playing` phase. |
+| **Chat** | `{ "message": "Hi" }` | Broadcast text to all players. |
+| **StartGame** | `null` | **(Admin)** Phase: `Lobby` -> `Betting`. |
+| **NextRound** | `null` | **(Admin)** Phase: `Payout` -> `Betting`. |
+| **ApprovePlayer**| `{ "player_id": "..." }` | **(Admin)** Allow a `PendingApproval` player to join. |
+| **KickPlayer** | `{ "player_id": "..." }` | **(Admin)** Remove a player. |
+| **UpdateSettings**| `{ "settings": { ... } }` | **(Admin)** Change rules mid-game. |
+| **AdminUpdateBalance** | `{ "target_id": "...", "change_chips": 500 }` | **(Admin)** Modify player chips (use negative to deduct). |
+
+---
+
+### Server Messages (Receive)
+
+Wrapped in: `{ "event": "Name", "data": { ... } }`
+
+#### 1. GameStateSnapshot
+Sent on **any** change. This is the **entire** state needed to render the game.
 ```json
 {
   "event": "GameStateSnapshot",
   "data": {
-    "phase": "Betting", // Lobby, Betting, Playing, DealerTurn, Payout, GameOver
-    "dealer_hand": [ {"suit": "Spades", "rank": "Ace"} ], // Hidden/Truncated if playing
-    "players": [
-      {
-        "id": "uuid-string",
-        "name": "Alice",
-        "chips": 1000,
-        "status": "Playing",
-        "hands": [ ... ],
-        "is_admin": true
-      }
-    ],
-    "deck_remaining": 48,
-    "current_turn_player_id": "uuid-string", // Null if not playing phase
-    "settings": { ... } // Current game settings
+    "phase": "Playing",
+    "dealer_hand": [ {"suit": "Clubs", "rank": "Five"} ], // First card hidden if playing
+    "players": [ ... ], // Array of Player objects
+    "deck_remaining": 42,
+    "current_turn_player_id": "uuid-string", // Whose turn is it? (null if not Playing)
+    "settings": { ... }
   }
 }
 ```
 
-**2. `JoinedLobby`**
-Confirmation sent to a user upon successful join.
+#### 2. JoinedLobby (Crucial)
+Sent only to YOU after a successful join or reconnect.
 ```json
 {
   "event": "JoinedLobby",
   "data": {
-    "game_id": "room1",
+    "game_id": "123456",
     "your_id": "uuid-string",
-    "is_admin": true
+    "secret": "KEEP_THIS_SECRET_uuid", // Save this for reconnection!
+    "is_admin": false
   }
 }
 ```
 
-**3. `ChatBroadcast`**
-```json
-{
-  "event": "ChatBroadcast",
-  "data": {
-    "from": "Alice",
-    "msg": "Good luck!"
-  }
-}
-```
-
-**4. `PlayerRequest`**
-Sent to admins when a player joins a room with `approval_required` enabled.
-```json
-{
-  "event": "PlayerRequest",
-  "data": {
-    "id": "uuid-string",
-    "name": "Charlie"
-  }
-}
-```
-
-**5. `Error`**
-Sent when an invalid action is attempted or a system error occurs.
+#### 3. Error
+Sent when an action fails.
 ```json
 {
   "event": "Error",
-  "data": { "msg": "Not enough chips to double down." }
+  "data": { "msg": "Not enough chips to split." }
+}
+```
+
+#### 4. PlayerRequest
+Sent to **Admins only** when `approval_required` is true and someone joins.
+```json
+{
+  "event": "PlayerRequest",
+  "data": { "id": "uuid", "name": "Stranger" }
+}
+```
+
+#### 5. ChatBroadcast
+```json
+{
+  "event": "ChatBroadcast",
+  "data": { "from": "Alice", "msg": "gg" }
 }
 ```
