@@ -113,8 +113,8 @@ impl GameActor {
             id: player_id,
             name: username,
             chips: self.settings.initial_chips,
-            current_bet: 0,
-            hand: vec![],
+            hands: vec![],
+            active_hand_index: 0,
             status,
             is_admin: is_first,
         });
@@ -129,21 +129,29 @@ impl GameActor {
 
         if let Some(player) = self.players.iter_mut().find(|p| p.id == player_id) {
             if player.chips >= amount {
-                player.current_bet = amount;
                 player.chips -= amount;
                 player.status = PlayerStatus::Playing;
+
+                player.hands = vec![Hand {
+                    cards: Vec::new(),
+                    bet: amount,
+                    status: HandStatus::Playing,
+                }];
+                player.active_hand_index = 0;
             }
         }
 
-        if self
-            .players
-            .iter()
-            .all(|p| p.current_bet > 0 || p.status == PlayerStatus::Spectating)
-        {
-            self.start_action_phase();
-        }
+        let all_bets_placed = self.players.iter().all(|p| {
+            p.status == PlayerStatus::Spectating
+                || p.status == PlayerStatus::PendingApproval
+                || (p.status == PlayerStatus::Playing && !p.hands.is_empty())
+        });
 
-        self.broadcast_state();
+        if all_bets_placed {
+            self.start_action_phase();
+        } else {
+            self.broadcast_state();
+        }
     }
 
     fn handle_action(&mut self, player_id: Uuid, action: ActionType) {
@@ -151,77 +159,138 @@ impl GameActor {
             return;
         }
 
-        let is_turn = if let Some(current_player) = self.get_current_player() {
-            current_player.id == player_id
-        } else {
-            false
-        };
+        let is_turn = self
+            .get_current_player()
+            .map(|p| p.id == player_id)
+            .unwrap_or(false);
 
         if !is_turn {
             return;
         }
 
-        match action {
-            ActionType::Hit => {
-                if let Some(card) = self.draw_card() {
-                    if let Some(player) = self.players.get_mut(self.turn_index) {
-                        player.hand.push(card);
-                        if calculate_hand_value(&player.hand) > 21 {
-                            player.status = PlayerStatus::Busted;
-                            self.advance_turn();
+        let mut action_result = ActionResult::None;
+
+        if let Some(player) = self.players.get(self.turn_index) {
+            if let Some(hand) = player.hands.get(player.active_hand_index) {
+                match action {
+                    ActionType::Hit => action_result = ActionResult::Hit,
+                    ActionType::Stand => action_result = ActionResult::Stand,
+                    ActionType::Double => {
+                        if player.chips >= hand.bet {
+                            action_result = ActionResult::Double(hand.bet);
+                        }
+                    }
+                    ActionType::Split => {
+                        if hand.cards.len() == 2 && player.chips >= hand.bet 
+                            && hand.cards[0].rank == hand.cards[1].rank {
+                            action_result = ActionResult::Split(hand.bet);
                         }
                     }
                 }
-            }
-            ActionType::Stand => {
-                if let Some(player) = self.players.get_mut(self.turn_index) {
-                    player.status = PlayerStatus::Stood;
-                }
-                self.advance_turn();
-            }
-            ActionType::Double => {
-                let mut card_drawn = None;
-                let mut valid_move = false;
-
-                // 1. Check funds
-                if let Some(player) = self.players.get(self.turn_index) {
-                    if player.chips >= player.current_bet {
-                        valid_move = true;
-                    }
-                }
-
-                if valid_move {
-                    card_drawn = self.draw_card();
-                }
-
-                if let Some(card) = card_drawn {
-                    if let Some(player) = self.players.get_mut(self.turn_index) {
-                        player.chips -= player.current_bet;
-                        player.current_bet *= 2;
-                        player.hand.push(card);
-
-                        if calculate_hand_value(&player.hand) > 21 {
-                            player.status = PlayerStatus::Busted;
-                        } else {
-                            player.status = PlayerStatus::Stood;
-                        }
-                        self.advance_turn();
-                    }
-                }
-            }
-            ActionType::Split => {
-                // TODO: Implement split logic (only allowed if first two cards are the same rank, creates a new hand, etc)
-                tracing::warn!("Split action not implemented yet");
             }
         }
 
-        self.broadcast_state();
+        let mut should_advance = false;
+
+        match action_result {
+            ActionResult::Hit => {
+                if let Some(card) = self.draw_card() {
+                    if let Some(player) = self.players.get_mut(self.turn_index) {
+                        if let Some(hand) = player.hands.get_mut(player.active_hand_index) {
+                            hand.cards.push(card);
+                            if calculate_hand_value(&hand.cards) > 21 {
+                                hand.status = HandStatus::Busted;
+                                should_advance = true;
+                            }
+                        }
+                    }
+                }
+            }
+            ActionResult::Stand => {
+                if let Some(player) = self.players.get_mut(self.turn_index) {
+                    if let Some(hand) = player.hands.get_mut(player.active_hand_index) {
+                        hand.status = HandStatus::Stood;
+                        should_advance = true;
+                    }
+                }
+            }
+            ActionResult::Double(bet_amount) => {
+                if let Some(player) = self.players.get_mut(self.turn_index) {
+                    player.chips -= bet_amount;
+                }
+
+                let card = self.draw_card();
+
+                if let Some(c) = card {
+                    if let Some(player) = self.players.get_mut(self.turn_index) {
+                        if let Some(hand) = player.hands.get_mut(player.active_hand_index) {
+                            hand.bet += bet_amount;
+                            hand.cards.push(c);
+                            if calculate_hand_value(&hand.cards) > 21 {
+                                hand.status = HandStatus::Busted;
+                            } else {
+                                hand.status = HandStatus::Doubled;
+                            }
+                            should_advance = true;
+                        }
+                    }
+                }
+            }
+            ActionResult::Split(bet_amount) => {
+                let card_for_first = self.draw_card();
+                let card_for_second = self.draw_card();
+
+                if let Some(player) = self.players.get_mut(self.turn_index) {
+                    player.chips -= bet_amount;
+
+                    let index = player.active_hand_index;
+
+                    if let Some(hand) = player.hands.get_mut(index) {
+                        if let Some(split_card) = hand.cards.pop() {
+                            if let Some(c) = card_for_first {
+                                hand.cards.push(c);
+                            }
+
+                            let mut new_hand_cards = vec![split_card];
+                            if let Some(c) = card_for_second {
+                                new_hand_cards.push(c);
+                            }
+
+                            let new_hand = Hand {
+                                cards: new_hand_cards,
+                                bet: bet_amount,
+                                status: HandStatus::Playing,
+                            };
+                            player.hands.insert(index + 1, new_hand);
+                        }
+                    }
+                }
+            }
+            ActionResult::None => {}
+        }
+
+        if should_advance {
+            self.advance_turn();
+        } else {
+            self.broadcast_state();
+        }
     }
 
     fn advance_turn(&mut self) {
+        if let Some(player) = self.players.get_mut(self.turn_index) {
+            if player.active_hand_index + 1 < player.hands.len() {
+                player.active_hand_index += 1;
+                self.broadcast_state();
+                return;
+            }
+        }
+
         self.turn_index += 1;
+
         if self.turn_index >= self.players.len() {
             self.play_dealer_turn();
+        } else {
+            self.broadcast_state();
         }
     }
 
@@ -243,26 +312,28 @@ impl GameActor {
         let dealer_value = calculate_hand_value(&self.dealer_hand);
 
         for player in self.players.iter_mut() {
-            if player.status == PlayerStatus::Spectating
-                || player.status == PlayerStatus::PendingApproval
-            {
+            if player.status != PlayerStatus::Playing {
                 continue;
             }
 
-            let player_value = calculate_hand_value(&player.hand);
+            for hand in player.hands.iter_mut() {
+                let hand_value = calculate_hand_value(&hand.cards);
 
-            if player.status == PlayerStatus::Busted {
-                // Player already lost bet
-            } else if dealer_value > 21 || player_value > dealer_value {
-                // Player wins
-                player.chips += player.current_bet * 2;
-            } else if player_value == dealer_value {
-                // Push, return bet
-                player.chips += player.current_bet;
+                if hand.status == HandStatus::Busted {
+                    // Player loses bet
+                } else if hand.status == HandStatus::Blackjack && dealer_value != 21 {
+                    player.chips += (hand.bet as f32 * 2.5) as u32;
+                } else if dealer_value > 21 || hand_value > dealer_value {
+                    player.chips += hand.bet * 2;
+                } else if hand_value == dealer_value {
+                    player.chips += hand.bet; // Push, return bet
+                }
+
+                hand.bet = 0;
             }
 
-            player.current_bet = 0;
-            player.hand.clear();
+            player.status = PlayerStatus::Sitting;
+            player.hands.clear();
         }
 
         self.dealer_hand.clear();
@@ -278,7 +349,7 @@ impl GameActor {
         self.phase = GamePhase::Betting;
         for player in self.players.iter_mut() {
             if player.status != PlayerStatus::Spectating {
-                player.status = PlayerStatus::Betting;
+                player.status = PlayerStatus::Playing;
             }
         }
         self.broadcast_state();
@@ -287,6 +358,27 @@ impl GameActor {
     fn start_action_phase(&mut self) {
         self.phase = GamePhase::Playing;
         self.turn_index = 0;
+
+        for _ in 0..2 {
+            for i in 0..self.players.len() {
+                let needs_card = self.players[i].status == PlayerStatus::Playing;
+
+                if needs_card {
+                    if let Some(card) = self.draw_card() {
+                        if let Some(player) = self.players.get_mut(i) {
+                            if let Some(hand) = player.hands.get_mut(0) {
+                                hand.cards.push(card);
+                            }
+                        }
+                    }
+                }
+            }
+
+            if let Some(card) = self.draw_card() {
+                self.dealer_hand.push(card);
+            }
+        }
+
         self.broadcast_state();
     }
 
@@ -313,4 +405,12 @@ impl GameActor {
 
         let _ = self.sender.send(msg);
     }
+}
+
+enum ActionResult {
+    None,
+    Hit,
+    Stand,
+    Double(u32),
+    Split(u32),
 }

@@ -16,19 +16,33 @@ pub struct Player {
     pub id: Uuid,
     pub name: String,
     pub chips: u32,
-    pub current_bet: u32,
-    pub hand: Vec<Card>,
+    pub hands: Vec<Hand>,
+    pub active_hand_index: usize,
     pub status: PlayerStatus,
     pub is_admin: bool,
+}
+
+#[derive(Debug, Serialize, Deserialize, Clone)]
+pub struct Hand {
+    pub cards: Vec<Card>,
+    pub bet: u32,
+    pub status: HandStatus,
+}
+
+#[derive(Debug, Serialize, Deserialize, Clone, PartialEq)]
+pub enum HandStatus {
+    Playing,
+    Stood,
+    Busted,
+    Blackjack,
+    Doubled,
 }
 
 #[derive(Debug, Serialize, Deserialize, Clone, PartialEq)]
 pub enum PlayerStatus {
     Spectating,      // Just joined or sitting out
-    Betting,         // Needs to place bet
-    Playing,         // Waiting for action
-    Stood,           // Finished turn
-    Busted,          // > 21
+    Sitting,         // Waiting for round
+    Playing,         // Currently in a round
     PendingApproval, // Waiting for admin to let them in
 }
 
