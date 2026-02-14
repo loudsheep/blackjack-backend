@@ -24,11 +24,11 @@ pub struct Player {
 
 #[derive(Debug, Serialize, Deserialize, Clone, PartialEq)]
 pub enum PlayerStatus {
-    Spectating, // Just joined or sitting out
-    Betting,    // Needs to place bet
-    Playing,    // Waiting for action
-    Stood,      // Finished turn
-    Busted,     // > 21
+    Spectating,      // Just joined or sitting out
+    Betting,         // Needs to place bet
+    Playing,         // Waiting for action
+    Stood,           // Finished turn
+    Busted,          // > 21
     PendingApproval, // Waiting for admin to let them in
 }
 
@@ -41,7 +41,7 @@ pub struct GameSettings {
     pub chat_enabled: bool,
 }
 
-#[derive(Debug, Serialize, Deserialize, Clone)]
+#[derive(Debug, Serialize, Deserialize, Clone, PartialEq)]
 pub enum Suit {
     Hearts,
     Diamonds,
@@ -49,7 +49,7 @@ pub enum Suit {
     Spades,
 }
 
-#[derive(Debug, Serialize, Deserialize, Clone)]
+#[derive(Debug, Serialize, Deserialize, Clone, PartialEq)]
 pub enum Rank {
     Two,
     Three,
@@ -66,7 +66,7 @@ pub enum Rank {
     Ace,
 }
 
-#[derive(Debug, Serialize, Deserialize, Clone)]
+#[derive(Debug, Serialize, Deserialize, Clone, PartialEq)]
 pub struct Card {
     pub suit: Suit,
     pub rank: Rank,
@@ -87,4 +87,51 @@ impl Card {
             Rank::Ace => 11, // ace can be 1 or 11, but we'll handle that in the game logic
         }
     }
+
+    pub fn new_deck() -> Vec<Card> {
+        let mut deck = Vec::new();
+        for suit in [Suit::Hearts, Suit::Diamonds, Suit::Clubs, Suit::Spades] {
+            for rank in [
+                Rank::Two,
+                Rank::Three,
+                Rank::Four,
+                Rank::Five,
+                Rank::Six,
+                Rank::Seven,
+                Rank::Eight,
+                Rank::Nine,
+                Rank::Ten,
+                Rank::Jack,
+                Rank::Queen,
+                Rank::King,
+                Rank::Ace,
+            ] {
+                deck.push(Card {
+                    suit: suit.clone(),
+                    rank: rank.clone(),
+                });
+            }
+        }
+        deck
+    }
+}
+
+pub fn calculate_hand_value(hand: &[Card]) -> u8 {
+    let mut score = 0;
+    let mut aces = 0;
+
+    for card in hand {
+        let value = card.value();
+        score += value;
+        if card.rank == Rank::Ace {
+            aces += 1;
+        }
+    }
+
+    while score > 21 && aces > 0 {
+        score -= 10;
+        aces -= 1;
+    }
+
+    score
 }

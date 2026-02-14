@@ -21,35 +21,38 @@ pub struct GameActor {
 impl GameActor {
     pub fn new(
         game_id: String,
-        settings: GameSettings,
-    ) -> (
-        Self,
-        mpsc::Sender<(Uuid, ClientMessage)>,
-        broadcast::Receiver<ServerMessage>,
-    ) {
-        let (sender, receiver) = mpsc::channel(100);
-        let (broadcast_sender, broadcast_receiver) = broadcast::channel(100);
-        (
-            Self {
-                game_id,
-                settings,
-                phase: GamePhase::Lobby,
-                deck: Vec::new(),
-                players: Vec::new(),
-                dealer_hand: Vec::new(),
-                turn_index: 0,
-                receiver,
-                sender: broadcast_sender,
+        receiver: mpsc::Receiver<(Uuid, ClientMessage)>,
+        sender: broadcast::Sender<ServerMessage>,
+    ) -> Self {
+        Self {
+            game_id,
+            // Default settings, will be overwritten by CreateGame
+            settings: GameSettings {
+                initial_chips: 1000,
+                max_players: 5,
+                deck_count: 1,
+                approval_required: false,
+                chat_enabled: true,
             },
+            phase: GamePhase::Lobby,
+            deck: Vec::new(),
+            players: Vec::new(),
+            dealer_hand: Vec::new(),
+            turn_index: 0,
+            receiver,
             sender,
-            broadcast_receiver,
-        )
+        }
     }
 
     pub async fn run(&mut self) {
         while let Some((player_id, msg)) = self.receiver.recv().await {
             match msg {
-                ClientMessage::CreateGame { settings, username } => {}
+                ClientMessage::CreateGame { settings, .. } => {
+                    if self.phase == GamePhase::Lobby {
+                        self.settings = settings;
+                        self.init_deck();
+                    }
+                }
                 ClientMessage::JoinGame { username, .. } => {
                     self.handle_join(player_id, username);
                 }
@@ -79,6 +82,15 @@ impl GameActor {
                 _ => {}
             }
         }
+    }
+
+    fn init_deck(&mut self) {
+        self.deck.clear();
+        for _ in 0..self.settings.deck_count {
+            self.deck.extend(Card::new_deck());
+        }
+        let mut rng = rand::rng();
+        self.deck.shuffle(&mut rng);
     }
 
     fn is_admin(&self, player_id: Uuid) -> bool {
@@ -139,19 +151,68 @@ impl GameActor {
             return;
         }
 
-        if let Some(current_player) = self.get_current_player() {
-            if current_player.id != player_id {
-                return;
-            }
+        let is_turn = if let Some(current_player) = self.get_current_player() {
+            current_player.id == player_id
         } else {
+            false
+        };
+
+        if !is_turn {
             return;
         }
 
         match action {
-            ActionType::Hit => {}
-            ActionType::Stand => {}
-            ActionType::Double => {}
-            ActionType::Split => {}
+            ActionType::Hit => {
+                if let Some(card) = self.draw_card() {
+                    if let Some(player) = self.players.get_mut(self.turn_index) {
+                        player.hand.push(card);
+                        if calculate_hand_value(&player.hand) > 21 {
+                            player.status = PlayerStatus::Busted;
+                            self.advance_turn();
+                        }
+                    }
+                }
+            }
+            ActionType::Stand => {
+                if let Some(player) = self.players.get_mut(self.turn_index) {
+                    player.status = PlayerStatus::Stood;
+                }
+                self.advance_turn();
+            }
+            ActionType::Double => {
+                let mut card_drawn = None;
+                let mut valid_move = false;
+
+                // 1. Check funds
+                if let Some(player) = self.players.get(self.turn_index) {
+                    if player.chips >= player.current_bet {
+                        valid_move = true;
+                    }
+                }
+
+                if valid_move {
+                    card_drawn = self.draw_card();
+                }
+
+                if let Some(card) = card_drawn {
+                    if let Some(player) = self.players.get_mut(self.turn_index) {
+                        player.chips -= player.current_bet;
+                        player.current_bet *= 2;
+                        player.hand.push(card);
+
+                        if calculate_hand_value(&player.hand) > 21 {
+                            player.status = PlayerStatus::Busted;
+                        } else {
+                            player.status = PlayerStatus::Stood;
+                        }
+                        self.advance_turn();
+                    }
+                }
+            }
+            ActionType::Split => {
+                // TODO: Implement split logic (only allowed if first two cards are the same rank, creates a new hand, etc)
+                tracing::warn!("Split action not implemented yet");
+            }
         }
 
         self.broadcast_state();
@@ -166,8 +227,46 @@ impl GameActor {
 
     fn play_dealer_turn(&mut self) {
         self.phase = GamePhase::DealerTurn;
-        // TODO: Implement dealer logic (hit until 17 or higher)
 
+        while calculate_hand_value(&self.dealer_hand) < 17 {
+            if let Some(card) = self.draw_card() {
+                self.dealer_hand.push(card);
+            } else {
+                break;
+            }
+        }
+
+        self.resolve_bets();
+    }
+
+    fn resolve_bets(&mut self) {
+        let dealer_value = calculate_hand_value(&self.dealer_hand);
+
+        for player in self.players.iter_mut() {
+            if player.status == PlayerStatus::Spectating
+                || player.status == PlayerStatus::PendingApproval
+            {
+                continue;
+            }
+
+            let player_value = calculate_hand_value(&player.hand);
+
+            if player.status == PlayerStatus::Busted {
+                // Player already lost bet
+            } else if dealer_value > 21 || player_value > dealer_value {
+                // Player wins
+                player.chips += player.current_bet * 2;
+            } else if player_value == dealer_value {
+                // Push, return bet
+                player.chips += player.current_bet;
+            }
+
+            player.current_bet = 0;
+            player.hand.clear();
+        }
+
+        self.dealer_hand.clear();
+        self.phase = GamePhase::Payout;
         self.broadcast_state();
     }
 
@@ -189,6 +288,13 @@ impl GameActor {
         self.phase = GamePhase::Playing;
         self.turn_index = 0;
         self.broadcast_state();
+    }
+
+    fn draw_card(&mut self) -> Option<Card> {
+        if self.deck.is_empty() {
+            self.init_deck();
+        }
+        self.deck.pop()
     }
 
     fn broadcast_state(&self) {

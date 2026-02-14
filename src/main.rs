@@ -17,9 +17,12 @@ async fn main() {
         .with(tracing_subscriber::fmt::layer())
         .init();
 
+    let shared_state = std::sync::Arc::new(state::AppState::new());
+
     let app = Router::new()
         .route("/", get(|| async { "Hello, World!" }))
-        .route("/ws", get(|| async { "WebSocket endpoint" }));
+        .route("/ws/{game_id}", get(ws::ws_handler))
+        .with_state(shared_state);
 
     // get address and port from environment variables or use defaults
     let addr = std::env::var("APP_ADDRESS").unwrap_or_else(|_| "127.0.0.1:3000".into());

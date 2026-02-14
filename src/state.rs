@@ -1,12 +1,15 @@
+use crate::{
+    game::actor::GameActor,
+    messages::{ClientMessage, ServerMessage},
+};
 use std::{collections::HashMap, sync::Mutex};
-
+use rand::RngExt;
 use tokio::sync::{broadcast, mpsc};
-
-use crate::messages::{ClientMessage, ServerMessage};
+use uuid::Uuid;
 
 #[derive(Clone)]
 pub struct GameHandle {
-    pub sender: mpsc::Sender<ClientMessage>,
+    pub sender: mpsc::Sender<(Uuid, ClientMessage)>,
     pub state_sender: broadcast::Sender<ServerMessage>,
 }
 
@@ -28,18 +31,19 @@ impl AppState {
             return handle.clone();
         }
 
-        let (lx, rx) = mpsc::channel(32);
-        let (tx_state, _) = broadcast::channel(32);
+        let (tx, rx) = mpsc::channel(100);
+        let (tx_state, _) = broadcast::channel(100);
 
-        let mut actor = GameActor::new(rx, tx_state.clone());
+        let mut actor = GameActor::new(game_id.to_string(), rx, tx_state.clone());
 
+        let game_id_owned = game_id.to_string(); 
         tokio::spawn(async move {
             actor.run().await;
-            tracing::info!("Game actor for game_id {} has finished", game_id);
+            tracing::info!("Game {} ended", game_id_owned);
         });
 
         let handle = GameHandle {
-            sender: lx,
+            sender: tx,
             state_sender: tx_state,
         };
 
@@ -47,7 +51,17 @@ impl AppState {
         handle
     }
 
-    pub async fn get_game_sender(&self, game_id: &str) -> mpsc::Sender<ClientMessage> {
+    pub fn generate_game_id(&self) -> String {
+        let mut rng = rand::rng();
+        loop {
+            let id = format!("{:06}", rng.random_range(0..999999)); // rng.gen_range or random_range
+            if !self.games.lock().unwrap().contains_key(&id) {
+                return id;
+            }
+        }
+    }
+
+    pub async fn get_game_sender(&self, game_id: &str) -> mpsc::Sender<(Uuid, ClientMessage)> {
         self.get_game_handle(game_id).await.sender
     }
 
