@@ -105,6 +105,11 @@ async fn handle_socket(
             if sender.send(Message::Text(json.into())).await.is_err() {
                 break;
             }
+
+            // Close connection upon Kicked
+            if let crate::messages::ServerMessage::Kicked = msg.message {
+                break;
+            }
         }
     });
 

@@ -349,9 +349,23 @@ impl GameActor {
             return;
         }
 
+        // Find all connections for this player and disconnect them
+        let connections: Vec<Uuid> = self
+            .connection_map
+            .iter()
+            .filter(|&(_, &pid)| pid == target_id)
+            .map(|(&cid, _)| cid)
+            .collect();
+
+        for cid in connections {
+            self.send_to(cid, ServerMessage::Kicked);
+            self.connection_map.remove(&cid);
+        }
+
         // Remove player
         if let Some(pos) = self.players.iter().position(|p| p.id == target_id) {
             self.players.remove(pos);
+            self.update_player_count();
             self.broadcast_state();
         }
     }

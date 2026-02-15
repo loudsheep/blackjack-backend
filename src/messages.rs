@@ -73,4 +73,5 @@ pub enum ServerMessage {
         id: Uuid,
         name: String,
     }, // Sent to admin only
+    Kicked,
 }

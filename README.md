@@ -139,7 +139,7 @@ Wrap all messages in: `{ "action": "Name", "payload": { ... } }`
 | **StartGame** | `null` | **(Admin)** Force start the game or skipped current player turn. |
 | **NextRound** | `null` | **(Admin)** Phase: `Payout` -> `Betting`. |
 | **ApprovePlayer**| `{ "player_id": "..." }` | **(Admin)** Allow a `PendingApproval` player to join. |
-| **KickPlayer** | `{ "player_id": "..." }` | **(Admin)** Remove a player. |
+| **KickPlayer** | `{ "player_id": "..." }` | **(Admin)** Remove and disconnect a player. |
 | **UpdateSettings**| `{ "settings": { ... } }` | **(Admin)** Change rules mid-game. |
 | **AdminUpdateBalance** | `{ "target_id": "...", "change_chips": 500 }` | **(Admin)** Modify player chips (use negative to deduct). |
 | **Ping** | `null` | Check latency/connection. Server replies with `Pong`. |
@@ -225,6 +225,15 @@ Response to **Ping**.
 ```json
 {
   "event": "Pong",
+  "data": null
+}
+```
+
+#### 7. Kicked
+Sent when you are removed from the game by an admin. The connection is closed immediately after.
+```json
+{
+  "event": "Kicked",
   "data": null
 }
 ```
