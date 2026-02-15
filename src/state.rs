@@ -12,8 +12,7 @@ pub struct GameHandle {
     pub sender: mpsc::Sender<(Uuid, ClientMessage)>,
     pub state_sender: broadcast::Sender<BroadcastMessage>,
     pub settings: GameSettings,
-    pub player_count: std::sync::Arc<std::sync::atomic::AtomicUsize>,
-    pub created_at: std::time::Instant,
+    pub player_count: std::sync::Arc<std::sync::atomic::AtomicUsize>
 }
 
 pub struct AppState {
@@ -75,7 +74,6 @@ impl AppState {
             state_sender: tx_state,
             settings: settings,
             player_count: player_count,
-            created_at: std::time::Instant::now(),
         };
 
         games.insert(id.clone(), handle);
