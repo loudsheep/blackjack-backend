@@ -685,7 +685,12 @@ impl GameActor {
             // Skip players who are not Playing (e.g. Sitting or Pending) or Disconnected
             if let Some(player) = self.players.get(self.turn_index) {
                 if player.status == PlayerStatus::Playing && player.is_connected {
-                    break;
+                    // Also ensure the player has a playable hand (skip if Blackjack)
+                    if let Some(hand) = player.hands.get(player.active_hand_index) {
+                        if hand.status == HandStatus::Playing {
+                            break;
+                        }
+                    }
                 }
             }
         }
@@ -709,6 +714,7 @@ impl GameActor {
 
     fn resolve_bets(&mut self) {
         let dealer_value = calculate_hand_value(&self.dealer_hand);
+        let dealer_is_blackjack = dealer_value == 21 && self.dealer_hand.len() == 2;
 
         for player in self.players.iter_mut() {
             if player.status != PlayerStatus::Playing {
@@ -721,9 +727,17 @@ impl GameActor {
                 if hand.status == HandStatus::Busted {
                     // Player loses bet
                     hand.status = HandStatus::Lost;
-                } else if hand.status == HandStatus::Blackjack && dealer_value != 21 {
-                    player.chips += (hand.bet as f32 * 2.5) as u32;
-                    hand.status = HandStatus::Won;
+                } else if hand.status == HandStatus::Blackjack {
+                    if dealer_is_blackjack {
+                        player.chips += hand.bet; // Push, return bet
+                        hand.status = HandStatus::Push;
+                    } else {
+                        player.chips += (hand.bet as f32 * 2.5) as u32;
+                        hand.status = HandStatus::Won;
+                    }
+                } else if dealer_is_blackjack {
+                    // Player does not have Blackjack, but Dealer does -> Player loses
+                    hand.status = HandStatus::Lost;
                 } else if dealer_value > 21 || hand_value > dealer_value {
                     player.chips += hand.bet * 2;
                     hand.status = HandStatus::Won;
@@ -814,15 +828,29 @@ impl GameActor {
             }
         }
 
-        // Set turn_index to the first active player who is connected
-        if let Some(pos) = self
-            .players
-            .iter()
-            .position(|p| p.status == PlayerStatus::Playing && p.is_connected)
-        {
+        // Check for Blackjacks immediately after deal
+        for player in self.players.iter_mut() {
+            if player.status == PlayerStatus::Playing {
+                if let Some(hand) = player.hands.get_mut(0) {
+                    if hand.cards.len() == 2 && calculate_hand_value(&hand.cards) == 21 {
+                        hand.status = HandStatus::Blackjack;
+                    }
+                }
+            }
+        }
+
+        // Set turn_index to the first active player who is connected and needs to act (no Blackjack)
+        if let Some(pos) = self.players.iter().position(|p| {
+            p.status == PlayerStatus::Playing
+                && p.is_connected
+                && p.hands
+                    .get(0)
+                    .map(|h| h.status == HandStatus::Playing)
+                    .unwrap_or(false)
+        }) {
             self.turn_index = pos;
         } else {
-            // No connected players, dealer takes over
+            // No connected players need to act (all Blackjacks or disconnected), dealer takes over
             self.play_dealer_turn();
             return;
         }
