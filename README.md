@@ -218,6 +218,7 @@ Sent to **Admins only** when `approval_required` is true and someone joins.
   "event": "ChatBroadcast",
   "data": { "from": "Alice", "msg": "gg" }
 }
+```
 
 #### 6. Pong
 Response to **Ping**.
@@ -227,4 +228,7 @@ Response to **Ping**.
   "data": null
 }
 ```
-```
+
+### Message Scoping
+- **Error Messages**: Most error messages (e.g. "Not enough chips", "It is not your turn") are now sent only to the relevant player (unicast), instead of being broadcast to the entire room.
+- **Game State**: Game state updates and chat messages are broadcast to all connected clients.
