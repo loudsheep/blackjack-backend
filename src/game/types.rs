@@ -104,7 +104,7 @@ impl Card {
             Rank::Eight => 8,
             Rank::Nine => 9,
             Rank::Ten | Rank::Jack | Rank::Queen | Rank::King => 10,
-            Rank::Ace => 11, // ace can be 1 or 11, but we'll handle that in the game logic
+            Rank::Ace => 11,
         }
     }
 

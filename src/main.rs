@@ -43,8 +43,6 @@ async fn main() {
         .route("/ws/{game_id}", get(ws::ws_handler))
         .with_state(shared_state)
         .layer(CorsLayer::permissive());
-
-    // get address and port from environment variables or use defaults
     let addr = std::env::var("APP_ADDRESS").unwrap_or_else(|_| "127.0.0.1:3000".into());
     let listener = tokio::net::TcpListener::bind(&addr).await.unwrap();
 

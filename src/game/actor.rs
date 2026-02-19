@@ -9,15 +9,15 @@ pub struct GameActor {
     settings: GameSettings,
     phase: GamePhase,
     deck: Vec<Card>,
-    players: Vec<Player>, // List of all players
+    players: Vec<Player>,
     dealer_hand: Vec<Card>,
-    turn_index: usize, // Who is playing right now?
+    turn_index: usize,
 
     // connection_id -> player_id
     connection_map: std::collections::HashMap<Uuid, Uuid>,
 
     // Channels
-    receiver: mpsc::Receiver<(Uuid, ClientMessage)>, // We need to know WHO sent the msg
+    receiver: mpsc::Receiver<(Uuid, ClientMessage)>,
     sender: broadcast::Sender<BroadcastMessage>,
     player_count_ref: std::sync::Arc<std::sync::atomic::AtomicUsize>,
     cleanup_sender: mpsc::Sender<String>,
@@ -89,7 +89,6 @@ impl GameActor {
                     }
                 }
             } else {
-                // Channel closed
                 break;
             }
         }
@@ -151,7 +150,7 @@ impl GameActor {
                 }
             }
 
-            _ => {} // Handled in run()
+            _ => {}
         }
     }
 
@@ -262,9 +261,6 @@ impl GameActor {
             },
         );
 
-        // If game is in lobby, just broadcast join
-        // If game is in progress (Betting, Playing, Payout), newcomer is Spectating
-        // but state should reflect that. Current implementation defaults to Spectating which is correct.
         self.broadcast_state();
     }
 
@@ -307,7 +303,6 @@ impl GameActor {
             self.broadcast_state();
         } else if let Some(msg) = error_msg {
             self.send_to(conn_id, ServerMessage::Error { msg: msg.into() });
-            // Force disconnect if reconnect fails (e.g. kicked player trying to rejoin)
             self.send_to(conn_id, ServerMessage::Kicked);
         }
     }
@@ -321,7 +316,6 @@ impl GameActor {
                 }
             }
             self.update_player_count();
-            // Don't remove player immediately.
             self.broadcast_state();
         }
     }
@@ -512,23 +506,11 @@ impl GameActor {
             return;
         }
 
-        // Check if all ELIGIBLE players have bet.
-        // Who is eligible?
-        // - Anyone who is 'Sitting' or 'Playing'.
-        // - 'Spectating' implicitly means 'Sitting' in this logic or 'Pending'.
-        // Actually, if we require ALL players in the room to bet before auto-start,
-        // then one person sitting out blocks the game.
-        // Flow Requirement: "if all have betted the system automatically starts".
-        // This implies if there are 3 people, and 3 people bet -> start.
-        // If 3 people, 2 bet, 1 sits -> Wait for admin or wait for 3rd?
-        // User said: "not betting players do not participate... game should not await their actions"
-        // So automatic start only happens if EVERYONE currently connected (and approved) has placed a bet.
-
         let all_ready = self.players.iter().all(|p| {
             !p.is_connected
                 || p.status == PlayerStatus::Playing
                 || p.status == PlayerStatus::PendingApproval
-                || p.chips == 0 // Skip players with no chips
+                || p.chips == 0
         });
 
         if all_ready {
@@ -670,7 +652,6 @@ impl GameActor {
 
     fn advance_turn(&mut self) {
         if let Some(player) = self.players.get_mut(self.turn_index) {
-            // Only advance hand index if this player is actually playing
             if player.status == PlayerStatus::Playing
                 && player.active_hand_index + 1 < player.hands.len()
             {
@@ -688,10 +669,8 @@ impl GameActor {
                 return;
             }
 
-            // Skip players who are not Playing (e.g. Sitting or Pending) or Disconnected
             if let Some(player) = self.players.get(self.turn_index) {
                 if player.status == PlayerStatus::Playing && player.is_connected {
-                    // Also ensure the player has a playable hand (skip if Blackjack)
                     if let Some(hand) = player.hands.get(player.active_hand_index) {
                         if hand.status == HandStatus::Playing {
                             break;
@@ -731,37 +710,32 @@ impl GameActor {
                 let hand_value = calculate_hand_value(&hand.cards);
 
                 if hand.status == HandStatus::Busted {
-                    // Player loses bet
                     hand.status = HandStatus::Lost;
                 } else if hand.status == HandStatus::Blackjack {
                     if dealer_is_blackjack {
-                        player.chips += hand.bet; // Push, return bet
+                        player.chips += hand.bet;
                         hand.status = HandStatus::Push;
                     } else {
                         player.chips += (hand.bet as f32 * 2.5) as u32;
                         hand.status = HandStatus::Won;
                     }
                 } else if dealer_is_blackjack {
-                    // Player does not have Blackjack, but Dealer does -> Player loses
                     hand.status = HandStatus::Lost;
                 } else if dealer_value > 21 || hand_value > dealer_value {
                     player.chips += hand.bet * 2;
                     hand.status = HandStatus::Won;
                 } else if hand_value == dealer_value {
-                    player.chips += hand.bet; // Push, return bet
+                    player.chips += hand.bet;
                     hand.status = HandStatus::Push;
                 } else {
                     hand.status = HandStatus::Lost;
                 }
 
-                // hand.bet = 0; // Keep bet amount for display during Payout
             }
 
             player.status = PlayerStatus::Sitting;
-            // player.hands.clear(); // Keep hands for display during Payout
         }
 
-        // self.dealer_hand.clear(); // Keep dealer hand for display during Payout
         self.phase = GamePhase::Payout;
         self.broadcast_state();
     }
@@ -774,19 +748,12 @@ impl GameActor {
         self.phase = GamePhase::Betting;
         self.dealer_hand.clear();
 
-        // Spectators stay Spectating.
-        // Playing players move to Sitting (waiting to bet).
-        // Pending stay Pending.
         for player in self.players.iter_mut() {
             player.hands.clear();
             if player.status == PlayerStatus::Playing
                 || player.status == PlayerStatus::Sitting
                 || player.status == PlayerStatus::Spectating
             {
-                // Everyone (except pending) becomes eligible to bet = Sitting
-                // The term Spectating in this codebase has been used loosely.
-                // Let's say: if you are in the room, you are Sitting and can bet.
-                // Unless you are Pending.
                 if player.status != PlayerStatus::PendingApproval {
                     player.status = PlayerStatus::Sitting;
                 }
@@ -796,12 +763,9 @@ impl GameActor {
     }
 
     fn start_action_phase(&mut self) {
-        // Only consider players who have bet as active for this round.
-        // Players who are 'Sitting' (did not bet) are skipped.
         self.phase = GamePhase::Playing;
         self.turn_index = 0;
 
-        // Count how many players are actually playing
         let players_playing = self
             .players
             .iter()
@@ -815,7 +779,6 @@ impl GameActor {
             return;
         }
 
-        // Deal cards only to Playing players
         for _ in 0..2 {
             for i in 0..self.players.len() {
                 if self.players[i].status == PlayerStatus::Playing {
@@ -834,7 +797,6 @@ impl GameActor {
             }
         }
 
-        // Check for Blackjacks immediately after deal
         for player in self.players.iter_mut() {
             if player.status == PlayerStatus::Playing {
                 if let Some(hand) = player.hands.get_mut(0) {
@@ -845,7 +807,6 @@ impl GameActor {
             }
         }
 
-        // Set turn_index to the first active player who is connected and needs to act (no Blackjack)
         if let Some(pos) = self.players.iter().position(|p| {
             p.status == PlayerStatus::Playing
                 && p.is_connected
@@ -856,7 +817,6 @@ impl GameActor {
         }) {
             self.turn_index = pos;
         } else {
-            // No connected players need to act (all Blackjacks or disconnected), dealer takes over
             self.play_dealer_turn();
             return;
         }

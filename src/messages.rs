@@ -10,16 +10,16 @@ pub enum ClientMessage {
     Reconnect { player_id: Uuid, secret: String },
 
     // Admin Actions
-    StartGame, // Transitions Lobby -> Betting
+    StartGame,
     ApprovePlayer { player_id: Uuid },
     KickPlayer { player_id: Uuid },
-    UpdateSettings { settings: GameSettings }, // Mid-game change
-    AdminUpdateBalance { target_id: Uuid, change_chips: i32 }, // Admin cheat/fix
-    NextRound,                                 // Transitions Payout -> Betting
+    UpdateSettings { settings: GameSettings },
+    AdminUpdateBalance { target_id: Uuid, change_chips: i32 },
+    NextRound,
 
     // Player Actions
     PlaceBet { amount: u32 },
-    GameAction { action_type: ActionType }, // Hit, Stand, Double, Split
+    GameAction { action_type: ActionType },
     Chat { message: String },
     Ping,
 

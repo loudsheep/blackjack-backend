@@ -29,15 +29,7 @@ pub async fn ws_handler(
     let current_players = handle
         .player_count
         .load(std::sync::atomic::Ordering::Relaxed);
-    // If reconnecting (params present), ignore max_players check?
-    // Actually difficult to check efficiently without locking actor.
-    // But if we reconnect, we are already one of the players (count includes disconnected players usually, code says:
-    // count = self.players.iter().filter(|p| p.is_connected).count()
-    // So if I disconnected, I am NOT counted. So I'm adding +1.
-    // If max players is reached, I cannot reconnect?
-    // That's a logic bug in how player_count is defined.
-    // Ideally reconnecting players should be allowed.
-    // For now I'll respect the existing check but user might want to fix this later.
+
     if params.player_id.is_none() && current_players >= handle.settings.max_players {
         return StatusCode::FORBIDDEN.into_response(); // 403 if full
     }
@@ -101,12 +93,10 @@ async fn handle_socket(
             }
 
             let json = serde_json::to_string(&msg.message).unwrap();
-            // Fix: Convert String to Utf8Bytes using .into()
             if sender.send(Message::Text(json.into())).await.is_err() {
                 break;
             }
 
-            // Close connection upon Kicked
             if let crate::messages::ServerMessage::Kicked = msg.message {
                 break;
             }
@@ -116,7 +106,6 @@ async fn handle_socket(
     while let Some(Ok(msg)) = receiver.next().await {
         if let Message::Text(text) = msg {
             if let Ok(client_msg) = serde_json::from_str::<ClientMessage>(&text) {
-                // This now matches the type expected by state.rs
                 if tx.send((connection_id, client_msg)).await.is_err() {
                     break;
                 }
