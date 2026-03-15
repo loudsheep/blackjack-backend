@@ -46,6 +46,6 @@ async fn main() {
     let addr = std::env::var("APP_ADDRESS").unwrap_or_else(|_| "127.0.0.1:3000".into());
     let listener = tokio::net::TcpListener::bind(&addr).await.unwrap();
 
-    tracing::info!("Starting server on {}", addr);
+    tracing::info!(%addr, "Starting server");
     axum::serve(listener, app).await.unwrap();
 }

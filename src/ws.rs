@@ -36,10 +36,10 @@ pub async fn ws_handler(
 
     let connection_id = uuid::Uuid::new_v4();
 
-    tracing::info!(
-        "New WebSocket connection: connection_id={}, game_id={}",
-        connection_id,
-        game_id
+    tracing::debug!(
+        %connection_id,
+        %game_id,
+        "New WebSocket connection",
     );
 
     ws.on_upgrade(move |socket| handle_socket(socket, game_id, connection_id, state, params))
@@ -57,7 +57,7 @@ async fn handle_socket(
     let tx = if let Some(tx) = state.get_game_sender(&game_id).await {
         tx
     } else {
-        tracing::warn!("Game {} not found during socket setup", game_id);
+        tracing::warn!(%game_id, "Game not found during socket setup");
         return;
     };
 

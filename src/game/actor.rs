@@ -62,7 +62,7 @@ impl GameActor {
                     Ok(res) => res,
                     Err(_) => {
                         // Timeout reached, cleanup
-                        tracing::info!("Game {} timeout due to inactivity", self.game_id);
+                        tracing::info!(game_id = %self.game_id, "Game timeout due to inactivity");
                         let _ = self.cleanup_sender.send(self.game_id.clone()).await;
                         return;
                     }

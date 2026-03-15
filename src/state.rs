@@ -31,7 +31,7 @@ impl AppState {
     pub fn remove_game(&self, game_id: &str) {
         let mut games = self.games.lock().unwrap();
         if games.remove(game_id).is_some() {
-            tracing::info!("Game {} removed from AppState", game_id);
+            tracing::info!(%game_id, "Game removed from AppState");
         }
     }
 
@@ -66,7 +66,7 @@ impl AppState {
         let game_id_owned = id.clone();
         tokio::spawn(async move {
             actor.run().await;
-            tracing::info!("Game {} ended", game_id_owned);
+            tracing::info!(game_id = %game_id_owned, "Game ended");
         });
 
         let handle = GameHandle {

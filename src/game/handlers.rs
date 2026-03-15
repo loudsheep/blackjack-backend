@@ -23,6 +23,6 @@ pub async fn create_game_handler(
     Json(payload): Json<CreateGameRequest>,
 ) -> impl IntoResponse {
     let game_id = state.create_game(payload.settings);
-    tracing::info!("Created new game with id: {}", game_id);
+    tracing::info!(%game_id, "Created new game");
     Json(CreateGameResponse { game_id })
 }
